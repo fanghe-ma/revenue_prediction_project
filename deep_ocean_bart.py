@@ -364,6 +364,191 @@ def preprocess_train_test_data(
         "data_red_df": data_red_df
     }
 
+def build_new_model(
+        features: dict,
+        use_default_priors: bool = True,
+        informative_priors: dict = None
+    ) -> pm.Model:
+    """Supports using posteriors as subsequent priors, and includes seasonality in revenue component
+
+    Args:
+        features (dict): _description_
+        use_default_priors (bool, optional): _description_. Defaults to True.
+        informative_priors (dict, optional): _description_. Defaults to None.
+
+    Raises:
+        ValueError: _description_
+        ValueError: _description_
+
+    Returns:
+        pm.Model: _description_
+    """
+    try:
+        expected_keys = [
+            "obs_idx",
+            "n_users",
+            "n_active_users",
+            "retention",
+            "revenue",
+            "features",
+            "x",
+            "cohorts",
+            "cohort_idx",
+            "age_scaled",
+            "cohort_age_scaled",
+            "period_idx",
+            "retention_logit",
+        ]
+        assert(key in features for key in expected_keys)
+    except AssertionError as e:
+        raise ValueError(f"Expected key is missing: {e}")
+
+    try:
+        if not use_default_priors:
+            assert informative_priors is not None
+    except AssertionError as e:
+        raise ValueError(f"Expected informative priors, {e}")
+
+    model = pm.Model(coords = {"features": features["features"]})
+    with model:
+        model.add_coord(
+            name="obs", 
+            values=features["obs_idx"]
+        )
+        age_scaled = pm.Data(
+            name="age_scaled", 
+            value=features["age_scaled"], 
+            dims="obs"
+        )
+        cohort_age_scaled = pm.Data(
+            name="cohort_age_scaled", 
+            value=features['cohort_age_scaled'], 
+            dims="obs"
+        )
+        x = pm.Data(
+            name="x", 
+            value=features["x"], 
+            dims=("obs", "feature")
+        )
+        n_users = pm.Data(
+            name="n_users", 
+            value=features["n_users"], 
+            dims="obs"
+        )
+        n_active_users = pm.Data(
+            name="n_active_users", 
+            value=features["n_active_users"], 
+            dims="obs"
+        )
+        revenue = pm.Data(
+            name="revenue", 
+            value=features["revenue"], 
+            dims="obs"
+        )
+        
+        month = pm.Data(
+            name="month", 
+            value=features['x']["month"], 
+            dims="obs"
+        )
+
+        # --- Priors ---
+        if use_default_priors:
+            intercept = pm.Normal(name="intercept", mu=np.array([1,]), sigma=np.array([1,]))
+            b_age_scaled = pm.Normal(name="b_age_scaled", mu=0, sigma=1)
+            b_cohort_age_scaled = pm.Normal(name="b_cohort_age_scaled", mu=0, sigma=1)
+            b_age_cohort_age_interaction = pm.Normal(
+                name="b_age_cohort_age_interaction", mu=0, sigma=1
+            )
+            b_seasonality = pm.Normal(name="b_seasonality", mu=0, sigma=1)
+            b_seasonality_age_interaction = pm.Normal(name="b_seasonality_age_interaction", mu=0, sigma=1)
+            b_seasonality_cohort_age_interaction = pm.Normal(name="b_seasonality_cohort_age_interaction", mu=0, sigma=1)
+        else:
+            intercept = pm.Normal(
+                name="intercept",
+                mu=float(informative_priors['intercept_posterior'].mean()),
+                sigma=float(informative_priors['intercept_posterior'].std())
+            )
+            
+            b_age_scaled = pm.Normal(
+                name="b_age_scaled",
+                mu=float(informative_priors['b_age_scaled_posterior'].mean()),
+                sigma=float(informative_priors['b_age_scaled_posterior'].std())
+            )
+            
+            b_cohort_age_scaled = pm.Normal(
+                name="b_cohort_age_scaled",
+                mu=float(informative_priors['b_cohort_age_posterior'].mean()),
+                sigma=float(informative_priors['b_cohort_age_posterior'].std())
+            )
+            
+            b_age_cohort_age_interaction = pm.Normal(
+                name="b_age_cohort_age_interaction",
+                mu=float(informative_priors['b_interaction_posterior'].mean()),
+                sigma=float(informative_priors['b_interaction_posterior'].std())
+            )
+            b_seasonality = pm.Normal(
+                name="b_seasonality", 
+                mu=float(informative_priors['b_seasonality'].mean()), 
+                sigma=float(informative_priors['b_seasonality'].std()), 
+            )
+            b_seasonality_age_interaction = pm.Normal(
+                name="b_seasonality_age_interaction", 
+                mu=float(informative_priors['b_seasonality_age_interaction'].mean()), 
+                sigma=float(informative_priors['b_seasonality_age_interaction'].std()), 
+            )
+            b_seasonality_cohort_age_interaction = pm.Normal(
+                name="b_seasonality_cohort_age_interaction", 
+                mu=float(informative_priors['b_seasonality_cohort_age_interaction'].mean()), 
+                sigma=float(informative_priors['b_seasonality_cohort_age_interaction'].std()), 
+            )
+
+        mu = pmb.BART(
+            name="mu",
+            X=x,
+            Y=features["retention_logit"],
+            m=50,
+            response="mix",
+            split_rules=[ContinuousSplitRule(), ContinuousSplitRule(), SubsetSplitRule()],
+            dims="obs",
+        )
+        p = pm.Deterministic(name="p", var=pm.math.invlogit(mu), dims="obs")
+        eps = np.finfo(float).eps
+        p = pt.switch(pt.eq(p, 0), eps, p)
+        p = pt.switch(pt.eq(p, 1), 1 - eps, p)
+
+        lam_log = pm.Deterministic(
+            name="lam_log",
+            var=intercept
+            + b_age_scaled * age_scaled
+            + b_cohort_age_scaled * cohort_age_scaled
+            + b_age_cohort_age_interaction * age_scaled * cohort_age_scaled
+            + b_seasonality * month
+            + b_seasonality_age_interaction * month * age_scaled 
+            + b_seasonality_cohort_age_interaction * month * cohort_age_scaled,
+            dims="obs",
+        )
+
+        lam = pm.Deterministic(name="lam", var=pm.math.exp(lam_log), dims="obs")
+
+        n_active_users_estimated = pm.Binomial(
+            name="n_active_users_estimated",
+            n=n_users,
+            p=p,
+            observed=n_active_users,
+            dims="obs",
+        )
+
+        x = pm.Gamma(
+            name="revenue_estimated",
+            alpha=n_active_users_estimated + eps,
+            beta=lam,
+            observed=revenue,
+            dims="obs",
+        )
+    return model
+
+
 def build_model(
         features: dict,
         use_default_priors: bool = True,
@@ -544,6 +729,9 @@ def extract_posteriors(idata: az.InferenceData) -> dict:
     posteriors['b_age_scaled_posterior'] = idata.posterior['b_age_scaled']
     posteriors['b_cohort_age_posterior'] = idata.posterior['b_cohort_age_scaled']
     posteriors['b_interaction_posterior'] = idata.posterior['b_age_cohort_age_interaction']
+    posteriors['b_seasonality'] = idata.posterior['b_seasonality'],
+    posteriors['b_seasonality_age_interaction'] = idata.posterior['b_seasonality_age_interaction'],
+    posteriors['b_seasonality_cohort_age_interaction'] = idata.posterior['b_seasonality_cohort_age_interaction'],
     return posteriors
 
 
@@ -555,7 +743,22 @@ def draw_new_predictions(
     pm.Model, 
     az.InferenceData, 
     ]:
-    
+    """Helper function to draw new predictions
+
+    NOTE: as of 0102, this function tries to set "month" data field within model
+    compatible with build_new_model(), not build_model
+
+    Args:
+        model (pm.model): _description_
+        test_features (dict): _description_
+        idata (az.InferenceData): _description_
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        tuple[ pm.Model, az.InferenceData, ]: _description_
+    """
     try:
         expected_keys = [
             "obs_idx",
@@ -583,21 +786,22 @@ def draw_new_predictions(
                 "revenue": np.ones_like(
                     test_features['revenue']
                 ),  # Dummy data to make coords work! We are not using this at prediction time!
+                "month": test_features['x']['month']
             },
             coords={"obs": test_features['obs_idx']},
         )
         idata.extend(
             pm.sample_posterior_predictive(
                 trace=idata,
-                var_names=[
-                    "p",
-                    "mu",
-                    "n_active_users_estimated",
-                    "revenue_estimated",
-                    "mean_revenue_per_user",
-                    "mean_revenue_per_active_user",
-                ],
-                idata_kwargs={"coords": {"obs": test_features['obs_idx']}},
+                # var_names=[
+                #     "p",
+                #     "mu",
+                #     "n_active_users_estimated",
+                #     "revenue_estimated",
+                #     "mean_revenue_per_user",
+                #     "mean_revenue_per_active_user",
+                # ],
+                # idata_kwargs={"coords": {"obs": test_features['obs_idx']}},
                 random_seed=42,
             )
         )
