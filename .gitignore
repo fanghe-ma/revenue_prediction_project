@@ -25,3 +25,6 @@
 
 # IPython Checkpoints
 .ipynb_checkpoints/*
+
+# Pycache 
+__pycache__/*
