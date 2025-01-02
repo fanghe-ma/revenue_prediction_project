@@ -351,6 +351,7 @@ def preprocess_train_test_data(
         "revenue": revenue,
         "features": features,
         "x" : x,
+        "period": period,
         "cohorts": None if mode == "test" else cohort,
         "cohort_idx": cohort_idx,
         "age_scaled": age_scaled,
@@ -813,7 +814,7 @@ def process_idata_posterior_predictive_for_plotting(
     posterior_predictive: az.data.inference_data.InferenceData,
     train_data_red_df: pd.DataFrame,
     test_data_red_df: pd.DataFrame
-)-> pd.DataFrame: 
+)-> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: 
     revenue_prediction = idata.posterior_predictive['revenue_estimated']
     mean_predicted_revenue = revenue_prediction.mean(dim = ['chain', 'draw'])
     hdi_predicted_revenue = az.hdi(revenue_prediction, hdi_prob = 0.95)['revenue_estimated']
@@ -858,7 +859,7 @@ def process_idata_posterior_predictive_for_plotting(
     combined_data = pd.concat([train_plot_data, plot_data], keys=['Train', 'Test'])
     combined_data = combined_data.reset_index(level=0)
     combined_data = combined_data.rename(columns={'level_0': 'Dataset'})
-    return combined_data
+    return (combined_data, train_data_red_df, test_data_red_df)
 
 @ DeprecationWarning
 def convert_to_forward_revenue(log_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -1371,31 +1372,87 @@ def plot_evaluations(
 
     
 if __name__ == "__main__":
+    date_range = pd.date_range(
+        "2021-12-01",
+        "2024-10-01",
+        freq = "1M"
+    )
+
+    log_file_path = None 
+    cohort_level_log_file_path = None 
+
+    log_df = pd.DataFrame(
+        columns = [
+            'Dataset', 
+            'Predicted Revenue', 
+            'Actual Revenue', 
+            'hdi_lower',
+            'hdi_upper', 
+            'cutoff'
+        ]
+    )
+    log_df.to_csv(log_file_path)
+
+    cohort_level_log_df = pd.DataFrame()
+    cohort_level_log_df.to_csv(cohort_level_log_file_path)
+
+
     transactions = load_transactions('./transactions.csv')
     transactions = preprocess_transactions(transactions)
     cohort = preprocess_transactions_to_cohort(transactions)
-    train_df, test_df = custom_train_test_split("2023-06-01", cohort)
-    train_features = preprocess_train_test_data(train_df, mode = "train")
 
-    model = build_model(train_features)
-    model, idata, pos_predictive = fit_model(model)
+    latest_posteriors = {}
 
-    test_features = preprocess_train_test_data(
-        test_df,
-        mode="test",
-        seen_cohorts = train_features['cohorts'],
-        cohort_encoder = train_features['cohort_encoder'],
-        age_scaler = train_features['age_scaler'],
-        cohort_age_scaler= train_features['cohort_age_scaler']
-    )
-    mode, idata = draw_new_predictions(model, test_features, idata)
+    for i, cutoff in enumerate(date_range):
+        cutoff = datetime.datetime.strftime(cutoff, format = "%Y-%m-%d")
+        print(f"Processing {cutoff}")
+        train_df, test_df = custom_train_test_split(cutoff, cohort)
+        train_features = preprocess_train_test_data(train_df, mode = "train")
 
-    combined_data = process_idata_posterior_predictive_for_plotting(
-        idata = idata,
-        posterior_predictive=pos_predictive,
-        train_data_red_df=train_features['data_red_df'],
-        test_data_red_df=test_features['data_red_df']
-    )
+        if i == 0:
+            model = build_new_model(train_features, use_default_priors=True)
+        else:
+            model = build_new_model(
+                train_features, 
+                use_default_priors=True,
+                informative_priors= latest_posteriors
+            )
+        model, idata, pos_predictive = fit_model(model)
+
+        latest_posteriors = extract_posteriors(idata)
+
+        test_features = preprocess_train_test_data(
+            test_df,
+            mode="test",
+            seen_cohorts = train_features['cohorts'],
+            cohort_encoder = train_features['cohort_encoder'],
+            age_scaler = train_features['age_scaler'],
+            cohort_age_scaler= train_features['cohort_age_scaler']
+        )
+        model, idata = draw_new_predictions(model, test_features, idata)
+
+        combined_data, train_data_red_df, test_data_red_df = process_idata_posterior_predictive_for_plotting(
+            idata = idata,
+            posterior_predictive=pos_predictive,
+            train_data_red_df=train_features['data_red_df'],
+            test_data_red_df=test_features['data_red_df']
+        )
+        combined_data['cutoff'] = [cutoff for _ in range(combined_data.shape[0])]
+        combined_data.reset_index(inplace=True)
+
+        train_data_red_df['Dataset'] = ["Train" for _ in range(train_data_red_df.shape[0])]
+        test_data_red_df['Dataset'] = ["Test" for _ in range(test_data_red_df.shape[0])]
+        
+        train_data_red_df['cutoff'] = [cutoff for _ in range(train_data_red_df.shape[0])]
+        test_data_red_df['cutoff'] = [cutoff for _ in range(test_data_red_df.shape[0])]
+
+        log_df = pd.read_csv(log_file_path, index_col=0)
+        log_df = pd.concat([log_df, combined_data], ignore_index=True)
+        log_df.to_csv(log_file_path)
+
+        cohort_level_log_df = pd.read_csv(cohort_level_log_file_path, index_col = 0)
+        cohort_level_log_df = pd.concat([cohort_level_log_df, train_data_red_df, test_data_red_df])
+        cohort_level_log_df.to_csv(cohort_level_log_file_path)
 
     
 
