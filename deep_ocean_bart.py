@@ -28,7 +28,8 @@ plt.rcParams["figure.facecolor"] = "white"
 
 def load_transactions(filepath: str, sample_start_date: str = "2020-12-31") -> pd.DataFrame:
     """
-    Loads dataframe and filters outliers (data points that occur too early in sample)
+    Loads transactions-view dataframe and 
+    filters outliers (data points that occur too early in sample)
 
     Args:
         filepath (str): csv file containing transactions
@@ -50,22 +51,28 @@ def load_transactions(filepath: str, sample_start_date: str = "2020-12-31") -> p
         df['ORDER_KEY'] = df['ORDER_KEY'].astype(str)
         df['DATE_KEY'] = pd.to_datetime(df['DATE_KEY'])
         mask = df['DATE_KEY'] > pd.to_datetime(sample_start_date)
-        return df[mask]
     except AssertionError as e:
         print(f"Expected column not found, {e}")
         print(f"Returning None")
         return None
 
+    return df[mask]
+
 
 def preprocess_transactions(df: pd.DataFrame) -> pd.DataFrame:
-    """Adds week, month, and cohort labels to transactions
+    """Add week, month, and cohort labels to transaction-view dataframe
 
     Args:
-        df (pd.DataFrame): dataframe containing transactions
+        df (pd.DataFrame)
 
     Returns:
         pd.DataFrame
     """
+    try:
+        assert("DATE_KEY" in df.columns)
+        assert("CUSTOMER_KEY" in df.columns)
+    except AssertionError as e:
+        raise ValueError(f"Missing columns, {e}")
     
     # week label
     df['WEEK'] = (
@@ -78,7 +85,6 @@ def preprocess_transactions(df: pd.DataFrame) -> pd.DataFrame:
         df['DATE_KEY'] - 
         (df['DATE_KEY'].dt.day - 1) * np.timedelta64(1, 'D')
     )
-
 
     # cohort label
     first_transaction = df.groupby(['CUSTOMER_KEY'])['DATE_KEY'].min()
@@ -97,14 +103,13 @@ def preprocess_transactions(df: pd.DataFrame) -> pd.DataFrame:
         left_on = 'CUSTOMER_KEY',
         right_index = True
     )
-
     return df
 
 def preprocess_transactions_to_cohort(
         transactions: pd.DataFrame,
         project_out_of_sample: bool = True
     ) -> pd.DataFrame:
-    """Pivot transactions dataframe into cohort dataframe
+    """Pivot transactions dataframe into cohort-view dataframe
 
     Args:
         transactions (pd.DataFrame): 
@@ -118,6 +123,14 @@ def preprocess_transactions_to_cohort(
         pd.DataFrame: cohort-view of dataset, containing one row per
         cohort per period, 
     """
+    try:
+        assert("CUSTOMER_KEY" in transactions.columns)
+        assert("FULL_REVENUE" in transactions.columns)
+        assert("CUSTOMER_KEY" in transactions.columns)
+        assert("COHORT" in transactions.columns)
+        assert("MONTH" in transactions.columns)
+    except AssertionError as e:
+        raise ValueError("Missing columns, {e}")
 
     cohort_pivot = pd.pivot_table(
         data = transactions,
@@ -154,7 +167,6 @@ def preprocess_transactions_to_cohort(
     max_date = transactions['DATE_KEY'].max()
     cohort_pivot['age'] = pd.to_datetime(max_date) - cohort_pivot['cohort']
 
-
     if project_out_of_sample:
         project_end_date = cohort_pivot['period'].max() + pd.DateOffset(years = 1)
         for cohort in cohort_pivot['cohort'].unique():
@@ -178,7 +190,6 @@ def preprocess_transactions_to_cohort(
     cohort_pivot['retention'] = cohort_pivot['n_active_users'] / cohort_pivot['n_users']
     cohort_pivot['revenue_per_user'] = cohort_pivot['revenue'] / cohort_pivot['n_users']
     cohort_pivot['revenue_per_active_user'] = cohort_pivot['revenue'] / cohort_pivot['n_active_users']
-
     cohort_pivot['cohort_age'] /= pd.to_timedelta("1D")
     cohort_pivot['age'] /= pd.to_timedelta("1D")
 
@@ -190,7 +201,7 @@ def custom_train_test_split(
         testing_period: str = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Divides cohort-view dataframe into training and test set
-    Dataframe is split by cutoff
+    split by cut off date
 
 
     Args:
@@ -233,12 +244,12 @@ def custom_train_test_split(
     else: 
         period_train_test_split = cutoff
         if testing_period == "1M":
-            period_test_end = (np.datetime64(cutoff) + pd.Timedelta(days = 1 * 31)).strftime(format="%Y-%m-%d")
+            period_test_end = (np.datetime64(cutoff) + pd.DateOffset(month = 1)).strftime(format="%Y-%m-%d")
         elif testing_period == "3M":
-            period_test_end = (np.datetime64(cutoff) + pd.Timedelta(days = 1 * 31 * 3)).strftime(format="%Y-%m-%d")
+            period_test_end = (np.datetime64(cutoff) + pd.DateOffset(month = 3)).strftime(format="%Y-%m-%d")
         else:
             # 1Y testing period
-            period_test_end = (np.datetime64(cutoff) + pd.Timedelta(days = 1 * 365)).strftime(format="%Y-%m-%d")
+            period_test_end = (np.datetime64(cutoff) + pd.DateOffset(years=1)).strftime(format="%Y-%m-%d")
 
         train_data_df = input_df.query("period <= @period_train_test_split")
         test_data_df = input_df.query("period > @period_train_test_split & period <= @period_test_end")
@@ -280,7 +291,7 @@ def preprocess_train_test_data(
     try:
         assert(mode in ["train", "test"])
     except AssertionError as e:
-        raise ValueError("Illegal argument passed: {mode}. Must be 'train' or 'test'")
+        raise ValueError(f"Illegal argument passed: {mode}. Must be 'train' or 'test'")
     
     try:
         if mode == "test":
@@ -289,7 +300,7 @@ def preprocess_train_test_data(
             assert(age_scaler is not None)
             assert(cohort_age_scaler is not None)
     except AssertionError as e:
-        raise ValueError("Missing argument, test mode specified but at least one required arguments is missing, {e}")
+        raise ValueError(f"Missing argument, test mode specified but at least one required arguments is missing, {e}")
 
     eps = np.finfo(float).eps
 
@@ -299,7 +310,6 @@ def preprocess_train_test_data(
     # drop cohorts that have age 0
     data_red_df = input_df.query("cohort_age > 0").reset_index(drop = True)
 
-    # filtering is now done in train_test_split
     if (mode == "test"):
         data_red_df = data_red_df[
             data_red_df['cohort'].isin(seen_cohorts)
@@ -373,13 +383,13 @@ def build_new_model(
     """Supports using posteriors as subsequent priors, and includes seasonality in revenue component
 
     Args:
-        features (dict): _description_
-        use_default_priors (bool, optional): _description_. Defaults to True.
-        informative_priors (dict, optional): _description_. Defaults to None.
+        features (dict): 
+        use_default_priors (bool, optional): If true, uses default priors, otherwise uses previous posteriors Defaults to True.
+        informative_priors (dict, optional): Posteriors to use as priors. Defaults to None.
 
     Raises:
-        ValueError: _description_
-        ValueError: _description_
+        ValueError: if features is missing a required key
+        ValueError: if use_default_prior is true but no informative prior is passed
 
     Returns:
         pm.Model: _description_
@@ -555,6 +565,21 @@ def build_model(
         use_default_priors: bool = True,
         informative_priors: dict = None
     ) -> pm.Model:
+    """Builds default model
+
+
+    Args:
+        features (dict): 
+        use_default_priors (bool, optional): If true, uses default priors, otherwise uses previous posteriors Defaults to True.
+        informative_priors (dict, optional): Posteriors to use as priors. Defaults to None.
+
+    Raises:
+        ValueError: if features is missing a required key
+        ValueError: if use_default_prior is true but no informative prior is passed
+
+    Returns:
+        pm.Model 
+    """
     try:
         expected_keys = [
             "obs_idx",
@@ -651,9 +676,6 @@ def build_model(
                 sigma=float(informative_priors['b_interaction_posterior'].std())
             )
 
-        # --- Parametrization ---
-        # The BART component models the image of the retention rate under the
-        # logit transform so that the range is not constrained to [0, 1].
         mu = pmb.BART(
             name="mu",
             X=x,
@@ -663,15 +685,11 @@ def build_model(
             split_rules=[ContinuousSplitRule(), ContinuousSplitRule(), SubsetSplitRule()],
             dims="obs",
         )
-        # We use the inverse logit transform to get the retention rate back into [0, 1].
         p = pm.Deterministic(name="p", var=pm.math.invlogit(mu), dims="obs")
-        # We add a small epsilon to avoid numerical issues.
         eps = np.finfo(float).eps
         p = pt.switch(pt.eq(p, 0), eps, p)
         p = pt.switch(pt.eq(p, 1), 1 - eps, p)
 
-        # For the revenue component we use a Gamma distribution where we combine the number
-        # of estimated active users with the average revenue per user.
         lam_log = pm.Deterministic(
             name="lam_log",
             var=intercept
@@ -726,13 +744,28 @@ def fit_model(
 
 def extract_posteriors(idata: az.InferenceData) -> dict:
     posteriors = {}
-    posteriors['intercept_posterior'] = idata.posterior['intercept']
-    posteriors['b_age_scaled_posterior'] = idata.posterior['b_age_scaled']
-    posteriors['b_cohort_age_posterior'] = idata.posterior['b_cohort_age_scaled']
-    posteriors['b_interaction_posterior'] = idata.posterior['b_age_cohort_age_interaction']
-    posteriors['b_seasonality'] = idata.posterior['b_seasonality'],
-    posteriors['b_seasonality_age_interaction'] = idata.posterior['b_seasonality_age_interaction'],
-    posteriors['b_seasonality_cohort_age_interaction'] = idata.posterior['b_seasonality_cohort_age_interaction'],
+    keys = [
+        'intercept_posterior',
+        'b_age_scaled_posterior',
+        'b_cohort_age_posterior',
+        'b_interaction_posterior',
+        'b_seasonality',
+        'b_seasonality_age_interaction',
+        'b_seasonality_cohort_age_interaction'
+    ]
+
+    for key in keys:
+        try:
+            posteriors[key] = idata.posterior[key]
+        except Exception as e:
+            pass
+    # posteriors['intercept_posterior'] = idata.posterior['intercept']
+    # posteriors['b_age_scaled_posterior'] = idata.posterior['b_age_scaled']
+    # posteriors['b_cohort_age_posterior'] = idata.posterior['b_cohort_age_scaled']
+    # posteriors['b_interaction_posterior'] = idata.posterior['b_age_cohort_age_interaction']
+    # posteriors['b_seasonality'] = idata.posterior['b_seasonality'],
+    # posteriors['b_seasonality_age_interaction'] = idata.posterior['b_seasonality_age_interaction'],
+    # posteriors['b_seasonality_cohort_age_interaction'] = idata.posterior['b_seasonality_cohort_age_interaction'],
     return posteriors
 
 
@@ -783,10 +816,10 @@ def draw_new_predictions(
                 "n_users": test_features['n_users'],
                 "n_active_users": np.ones_like(
                     test_features['n_active_users']
-                ),  # Dummy data to make coords work! We are not using this at prediction time!
+                ),  
                 "revenue": np.ones_like(
                     test_features['revenue']
-                ),  # Dummy data to make coords work! We are not using this at prediction time!
+                ),  
                 "month": test_features['x']['month']
             },
             coords={"obs": test_features['obs_idx']},
@@ -794,19 +827,20 @@ def draw_new_predictions(
         idata.extend(
             pm.sample_posterior_predictive(
                 trace=idata,
-                # var_names=[
-                #     "p",
-                #     "mu",
-                #     "n_active_users_estimated",
-                #     "revenue_estimated",
-                #     "mean_revenue_per_user",
-                #     "mean_revenue_per_active_user",
-                # ],
+                var_names=[
+                    "p",
+                    "mu",
+                    "n_active_users_estimated",
+                    "revenue_estimated",
+                    # "mean_revenue_per_user",
+                    # "mean_revenue_per_active_user",
+                ],
                 # idata_kwargs={"coords": {"obs": test_features['obs_idx']}},
                 random_seed=42,
             )
         )
-        return (model, idata)
+    
+    return (model, idata)
     
 
 def process_idata_posterior_predictive_for_plotting(
@@ -861,99 +895,6 @@ def process_idata_posterior_predictive_for_plotting(
     combined_data = combined_data.rename(columns={'level_0': 'Dataset'})
     return (combined_data, train_data_red_df, test_data_red_df)
 
-@ DeprecationWarning
-def convert_to_forward_revenue(log_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    
-    # log_df['period'] = pd.to_datetime(log_df['period'], format="mixed")
-    # log_df['cutoff'] = pd.to_datetime(log_df['cutoff'], format="mixed")
-
-    transformed_log_df_predicted = log_df.pivot_table(
-        index = "cutoff",
-        columns = "period",
-        values = "Predicted Revenue"
-    )
-
-    transformed_log_df_predicted['3 month forward'] =  np.full(transformed_log_df_predicted.shape[0], np.nan)
-    transformed_log_df_predicted['6 month forward'] =  np.full(transformed_log_df_predicted.shape[0], np.nan)
-    transformed_log_df_predicted['12 month forward'] = np.full(transformed_log_df_predicted.shape[0], np.nan)
-
-    num_cols = transformed_log_df_predicted.shape[1]
-
-    for i, idx in enumerate(transformed_log_df_predicted.index):
-        if idx < log_df['period'].max() - pd.Timedelta(days = 3 * 31):
-            transformed_log_df_predicted.loc[idx, '3 month forward'] = np.sum(transformed_log_df_predicted.iloc[i, i:min(i+3, num_cols - 4)])
-        if idx < log_df['period'].max() - pd.Timedelta(days = 6 * 31):
-            transformed_log_df_predicted.loc[idx, '6 month forward'] = np.sum(transformed_log_df_predicted.iloc[i, i:min(i+6, num_cols - 4)])
-        if idx < log_df['period'].max() - pd.Timedelta(days = 365):
-            transformed_log_df_predicted.loc[idx, '12 month forward'] = np.sum(transformed_log_df_predicted.iloc[i,i:min(i+12, num_cols - 4)])
-
-
-    transformed_log_df_actual = log_df.pivot_table(
-        index = "cutoff",
-        columns = "period",
-        values = "Actual Revenue"
-    )
-
-    transformed_log_df_actual['3 month forward'] =  np.full( transformed_log_df_actual.shape[0], np.nan)
-    transformed_log_df_actual['6 month forward'] =  np.full( transformed_log_df_actual.shape[0], np.nan)
-    transformed_log_df_actual['12 month forward'] = np.full(transformed_log_df_actual.shape[0] , np.nan)
-
-    for i, idx in enumerate(transformed_log_df_actual.index):
-        if idx < log_df['cutoff'].max() - pd.Timedelta(days = 3 * 31):
-            transformed_log_df_actual.loc[idx, '3 month forward'] =  np.sum(transformed_log_df_actual.iloc[i, i:min(i+3, num_cols-4)])
-        if idx < log_df['cutoff'].max() - pd.Timedelta(days = 6 * 31):
-            transformed_log_df_actual.loc[idx, '6 month forward'] =  np.sum(transformed_log_df_actual.iloc[i, i:min(i+6, num_cols - 4)])
-        if idx < log_df['cutoff'].max() - pd.Timedelta(days = 365):
-            transformed_log_df_actual.loc[idx, '12 month forward'] = np.sum(transformed_log_df_actual.iloc[i, i:min(i+12, num_cols - 4)])
-
-    return (transformed_log_df_actual, transformed_log_df_predicted)
-
-@ DeprecationWarning
-def plot_forward_revenue(actual, predicted):
-
-    fig, ax = plt.subplots(figsize=(15, 8))
-    ax.plot(
-        (predicted['3 month forward']),
-        label = "3 month forward revenue - predicted",
-        linestyle="--",
-        color = "C0",
-    )
-    ax.plot(
-        (predicted['6 month forward']),
-        label = "6 month forward revenue - predicted",
-        linestyle="--",
-        color = "C1",
-    )
-    ax.plot(
-        (predicted['12 month forward']),
-        label = "12 month forward revenue - predicted",
-        linestyle="--",
-        color = "C2",
-    )
-    ax.plot(
-        (actual['3 month forward']),
-        label = "3 month forward revenue - realized",
-        color = "C0",
-        marker = "o"
-    )
-    ax.plot(
-        (actual['6 month forward']),
-        label = "6 month forward revenue - realized",
-        color = "C1",
-        marker = "o"
-    )
-    ax.plot(
-        (actual['12 month forward']),
-        label = "12 month forward revenue - realized",
-        color = "C2",
-        marker = "o"
-    )
-    fig.legend(loc = "center left", bbox_to_anchor = (1, 0.5))
-    fig.suptitle("Forward revenue against time of projection")
-    ax.yaxis.set_major_formatter(mtick.StrMethodFormatter('${x:,.0f}'))
-    plt.show()
-
-
 def trim_sum(x: pd.Series):
     if x.isna().sum() > 0:
         return np.nan
@@ -981,6 +922,7 @@ def calculate_forward_revenue(
                 })
                 continue
                 
+            # TODO: handle missing columns 
             forward_n_months = group[
                 (group['period'] > cutoff_date) & 
                 (group['period'] <= cutoff_date + pd.DateOffset(months=n_months))
@@ -1001,12 +943,10 @@ def calculate_forward_revenue(
         dfs.append(pd.DataFrame(results).set_index("cutoff"))
     
     res = pd.concat(dfs, axis = 1)
-    
     return pd.DataFrame(res)
 
 def evaluate_predictions(
         log_df: pd.DataFrame,
-        testing_period = "1Y" 
 ):
     dfs = []
     for cutoff_date, group in log_df.groupby(['cutoff']):

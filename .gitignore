@@ -28,3 +28,9 @@
 
 # Pycache 
 __pycache__/*
+
+# JSON Logs
+json_logs/*
+
+# Plots
+plots/*
