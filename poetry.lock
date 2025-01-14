@@ -76,6 +76,23 @@ astroid = ["astroid (>=2,<4)"]
 test = ["astroid (>=2,<4)", "pytest", "pytest-cov", "pytest-xdist"]
 
 [[package]]
+name = "autograd"
+version = "1.7.0"
+description = "Efficiently computes derivatives of NumPy code."
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "autograd-1.7.0-py3-none-any.whl", hash = "sha256:49680300f842f3a8722b060ac0d3ed7aca071d1ad4d3d38c9fdadafdcc73c30b"},
+    {file = "autograd-1.7.0.tar.gz", hash = "sha256:de743fd368d6df523cd37305dcd171861a9752a144493677d2c9f5a56983ff2f"},
+]
+
+[package.dependencies]
+numpy = "*"
+
+[package.extras]
+scipy = ["scipy"]
+
+[[package]]
 name = "cachetools"
 version = "5.5.0"
 description = "Extensible memoizing collections and decorators"
@@ -330,6 +347,21 @@ files = [
     {file = "decorator-5.1.1-py3-none-any.whl", hash = "sha256:b8c3f85900b9dc423225913c5aace94729fe1fa9763b38939a95226f02d37186"},
     {file = "decorator-5.1.1.tar.gz", hash = "sha256:637996211036b6385ef91435e4fae22989472f9d571faba8927ba8253acbc330"},
 ]
+
+[[package]]
+name = "dill"
+version = "0.3.9"
+description = "serialize all of Python"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "dill-0.3.9-py3-none-any.whl", hash = "sha256:468dff3b89520b474c0397703366b7b95eebe6303f108adf9b19da1f702be87a"},
+    {file = "dill-0.3.9.tar.gz", hash = "sha256:81aa267dddf68cbfe8029c42ca9ec6a4ab3b22371d1c450abc54422577b4512c"},
+]
+
+[package.extras]
+graph = ["objgraph (>=1.7.2)"]
+profile = ["gprof2dot (>=2022.7.29)"]
 
 [[package]]
 name = "etils"
@@ -955,6 +987,24 @@ files = [
     {file = "kiwisolver-1.4.7-pp39-pypy39_pp73-win_amd64.whl", hash = "sha256:0c6c43471bc764fad4bc99c5c2d6d16a676b1abf844ca7c8702bdae92df01ee0"},
     {file = "kiwisolver-1.4.7.tar.gz", hash = "sha256:9893ff81bd7107f7b685d3017cc6583daadb4fc26e4a888350df530e41980a60"},
 ]
+
+[[package]]
+name = "lifetimes"
+version = "0.11.3"
+description = "Measure customer lifetime value in Python"
+optional = false
+python-versions = "*"
+files = [
+    {file = "Lifetimes-0.11.3-py3-none-any.whl", hash = "sha256:261e3dc89977c2b60767ca6728aaa29d429de0c814635070a749c36555895da8"},
+    {file = "Lifetimes-0.11.3.tar.gz", hash = "sha256:15af22b130ed0cc6148d8ae4eb9b0f9c8c9bc9c952dd4ce68a1da0bc4c80c712"},
+]
+
+[package.dependencies]
+autograd = ">=1.2.0"
+dill = ">=0.2.6"
+numpy = ">=1.10.0"
+pandas = ">=0.24.0"
+scipy = ">=1.0.0"
 
 [[package]]
 name = "llvmlite"
@@ -2549,4 +2599,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10, <3.12"
-content-hash = "2e6b94d83a1065fc8af95a0cd18230a3bcd5ac0d8da37cd5e19ac9dc826ba06a"
+content-hash = "8b57e740d4ba220ff82a334cacaff0108fc11859db4acb33fb07c7b17b0e69ad"
