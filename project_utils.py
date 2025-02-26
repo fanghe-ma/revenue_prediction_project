@@ -266,7 +266,8 @@ def preprocess_train_test_data(
         seen_cohorts: pd.Series = None,
         cohort_encoder = None,
         age_scaler = None,
-        cohort_age_scaler = None
+        cohort_age_scaler = None,
+        training_period:int = None,
     ) -> dict:
     """
     Preprocesses input dataframe into a dictionary where each element can be passed to 
@@ -305,7 +306,7 @@ def preprocess_train_test_data(
     eps = np.finfo(float).eps
 
     if limit_training_data and mode == "train":
-        input_df = input_df[input_df['period'] > input_df['period'].max() - pd.DateOffset(years = 1)]
+        input_df = input_df[input_df['period'] > input_df['period'].max() - pd.DateOffset(years = training_period)]
 
     # drop cohorts that have age 0
     data_red_df = input_df.query("cohort_age > 0").reset_index(drop = True)
@@ -317,7 +318,7 @@ def preprocess_train_test_data(
 
     obs_idx = data_red_df.index.to_numpy()
     n_users = data_red_df['n_users'].to_numpy().astype(int)
-    n_active_users = data_red_df['n_active_users'].to_numpy()
+    n_active_users = data_red_df['n_active_users'].to_numpy().astype(int)
     retention = data_red_df['retention'].to_numpy()
     revenue = data_red_df['revenue'].to_numpy() + eps
 
@@ -519,7 +520,8 @@ def build_new_model(
             X=x,
             Y=features["retention_logit"],
             m=50,
-            response="mix",
+            # response="mix",
+            response="linear",
             split_rules=[ContinuousSplitRule(), ContinuousSplitRule(), SubsetSplitRule()],
             dims="obs",
         )
@@ -1039,11 +1041,14 @@ def plot_monthly_revenue(
         )
         ax.plot(
             combined_data[test_mask].index, 
-            combined_data[test_mask]['Actual Revenue'], 
+            combined_data[test_mask]['Actual Revenue'].apply(
+                lambda x: np.nan if x == 0 else x
+            ), 
             label='Actual Revenue (Test)',
             color="C1",
             marker='o',
         )
+        print(f"===========" * 20)
 
         split_point = combined_data[train_mask].index[-1]
         ax.axvline(x=split_point, color='black', linestyle='--', label='Train/Test Split')
